@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EduMentor AI</title>
+<style>
+  :root { --bg:#0b1220; --card:#131c31; --line:#25314f; --txt:#e7ecf7; --mut:#8c9ab8; --acc:#22d3ee; --ok:#4ade80; --warn:#fbbf24; --bad:#f87171; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,Segoe UI,Arial,sans-serif; background:var(--bg); color:var(--txt); }
+  header { padding:18px 28px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; }
+  h1 { margin:0; font-size:22px; } h1 span { color:var(--acc); }
+  button { background:var(--acc); color:#04222a; border:0; padding:8px 14px; border-radius:8px; font-weight:600; cursor:pointer; }
+  button.ghost { background:transparent; color:var(--acc); border:1px solid var(--acc); }
+  main { max-width:1100px; margin:auto; padding:22px; display:grid; gap:20px; }
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:14px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
+  .card h3 { margin:0 0 6px; font-size:13px; color:var(--mut); font-weight:500; }
+  .big { font-size:26px; font-weight:700; }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th,td { text-align:left; padding:9px 8px; border-bottom:1px solid var(--line); }
+  th { color:var(--mut); font-weight:500; }
+  .pill { padding:2px 9px; border-radius:99px; font-size:12px; font-weight:600; }
+  .Low { background:#14351f; color:var(--ok); } .Medium { background:#3a2e0c; color:var(--warn); } .High { background:#3d1717; color:var(--bad); }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:20px; } @media(max-width:800px){ .two{grid-template-columns:1fr;} }
+  .chat { height:260px; overflow:auto; background:#0e1628; border-radius:8px; padding:10px; margin-bottom:10px; font-size:14px; }
+  .msg { margin:6px 0; white-space:pre-wrap; } .me { color:var(--acc); } .ai { color:var(--txt); }
+  input { width:100%; padding:10px; border-radius:8px; border:1px solid var(--line); background:#0e1628; color:var(--txt); }
+  .row { display:flex; gap:8px; }
+  pre { white-space:pre-wrap; margin:0; font-family:inherit; font-size:14px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Edu<span>Mentor</span> AI <small style="color:var(--mut);font-size:13px">offline mentor powered by Ollama</small></h1>
+  <div><button class="ghost" onclick="seed()">Load demo data</button> <button onclick="load()">Refresh</button></div>
+</header>
+<main>
+  <section class="stats" id="stats"></section>
+
+  <section class="card">
+    <h3>Students (click “Report” for an AI mentor report)</h3>
+    <div style="overflow-x:auto"><table id="tbl"></table></div>
+  </section>
+
+  <section class="two">
+    <div class="card">
+      <h3>Ask the AI about your students</h3>
+      <div class="chat" id="chat"></div>
+      <div class="row"><input id="q" placeholder="e.g. Who needs the most help?" onkeydown="if(event.key==='Enter')ask()"><button onclick="ask()">Ask</button></div>
+    </div>
+    <div class="card">
+      <h3>AI Mentor Report</h3>
+      <pre id="report" style="color:var(--mut)">Pick a student from the table above.</pre>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+async function api(url, opt){ const r = await fetch(url, opt); const j = await r.json(); if(!r.ok) throw new Error(j.detail || 'Request failed'); return j; }
+
+async function load(){
+  const s = await api('/analytics/summary');
+  if(!s.total_students){ $('stats').innerHTML = '<div class="card">No data yet. Click “Load demo data”.</div>'; $('tbl').innerHTML=''; return; }
+  $('stats').innerHTML = [
+    ['Students', s.total_students], ['Avg Marks', s.average_marks], ['Avg Attendance', s.average_attendance + '%'],
+    ['Topper', s.topper.name], ['High Risk', s.at_risk_students.length]
+  ].map(([k,v]) => `<div class="card"><h3>${k}</h3><div class="big">${v}</div></div>`).join('');
+  const list = await api('/students/');
+  $('tbl').innerHTML = '<tr><th>Name</th><th>Course</th><th>Marks</th><th>Grade</th><th>Attendance</th><th>Risk</th><th></th></tr>' +
+    list.map(x => `<tr><td>${x.name}</td><td>${x.course}</td><td>${x.marks}</td><td>${x.grade}</td><td>${x.attendance}%</td>
+      <td><span class="pill ${x.risk}">${x.risk}</span></td><td><button class="ghost" onclick="report(${x.id})">Report</button></td></tr>`).join('');
+}
+async function seed(){ await api('/students/seed/demo', {method:'POST'}); load(); }
+
+async function ask(){
+  const q = $('q').value.trim(); if(!q) return; $('q').value='';
+  const chat = $('chat');
+  chat.innerHTML += `<div class="msg me">You: ${q}</div><div class="msg ai" id="pending">Thinking…</div>`;
+  chat.scrollTop = chat.scrollHeight;
+  try { const r = await api('/ai/ask', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({question:q})});
+        $('pending').textContent = 'AI: ' + r.answer; }
+  catch(e){ $('pending').textContent = 'Error: ' + e.message; }
+  $('pending').removeAttribute('id'); chat.scrollTop = chat.scrollHeight;
+}
+async function report(id){
+  $('report').textContent = 'Generating report… (local models can take a while)';
+  try { const r = await api('/ai/mentor-report/' + id); $('report').textContent = r.student + '\n\n' + r.report; $('report').style.color='var(--txt)'; }
+  catch(e){ $('report').textContent = 'Error: ' + e.message; }
+}
+load();
+</script>
+</body>
+</html>
